@@ -13,6 +13,7 @@ from src.chat.get_prompt import (
 )
 from src.websearch.web_search import WebSearch
 from src.webscraping.web_scraping import WebScraper
+from src.tiktoken import count_tokens
 import json
 from dotenv import load_dotenv
 import os
@@ -116,7 +117,8 @@ def main():
                     scrape_options = {
                         "save_json": False,
                         "save_markdown": False,
-                        "exclude_links": True
+                        "exclude_links": True,
+                        "max_depth": 20
                     }
                     
                     # Web検索を実行し、Markdown形式でデータを取得
@@ -130,8 +132,9 @@ def main():
                     print(f"Web検索処理時間: {time.time() - start_time:.2f}秒")
                     
                     # 検索結果とスクレイピングデータを整理
-                    research_prompt = get_web_research_summarize_prompt()
                     research_content = f"検索キーワード: {keyword}\n\n"
+                    current_chunk = research_content
+                    intermediate_summaries = []
                     
                     # スクレイピング結果の確認
                     has_valid_content = False
@@ -139,15 +142,31 @@ def main():
                         for url, data in search_result["scraped_data"].items():
                             if data and "markdown_data" in data:
                                 has_valid_content = True
-                                research_content += f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                new_content = f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                # トークン数を計算
+                                if count_tokens(current_chunk + new_content) > 30000:
+                                    # 現在のチャンクを中間要約
+                                    intermediate_summary = openai.openai_chat(
+                                        openai_model="gpt-4o",
+                                        prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                    )
+                                    intermediate_summaries.append(intermediate_summary)
+                                    # 新しいチャンクを開始
+                                    current_chunk = new_content
+                                else:
+                                    current_chunk += new_content
                     
                     if has_valid_content:
-                        # AIによる検索結果の整理
-                        start_time = time.time()
-                        summary = openai.openai_chat(
-                            openai_model="gpt-4o",
-                            prompt=research_prompt + f"\n\n{research_content}"
-                        )
+                        # 最後のチャンクを処理
+                        if current_chunk:
+                            intermediate_summary = openai.openai_chat(
+                                openai_model="gpt-4o",
+                                prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                            )
+                            intermediate_summaries.append(intermediate_summary)
+                        
+                        # すべての中間要約を結合
+                        summary = "\n\n".join(intermediate_summaries)
                         print(f"検索結果整理処理時間: {time.time() - start_time:.2f}秒")
                     else:
                         summary = "情報の取得に失敗しました。"

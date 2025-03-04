@@ -5,10 +5,12 @@ from src.chat.get_prompt import (
     get_insurance_product_judge_prompt,
     get_insurance_product_reviews_prompt,
     get_insurance_product_sales_pitch_prompt,
-    get_insurance_product_switch_pitch_prompt
+    get_insurance_product_switch_pitch_prompt,
+    get_web_research_summarize_prompt
 )
 from src.websearch.web_search import WebSearch
 from src.webscraping.web_scraping import WebScraper
+from src.tiktoken import count_tokens
 import json
 from dotenv import load_dotenv
 import os
@@ -106,29 +108,56 @@ def main():
                     scrape_options = {
                         "save_json": False,
                         "save_markdown": False,
-                        "exclude_links": True # リンクを除外
+                        "exclude_links": True, # リンクを除外
+                        "max_depth": 20
                     }
                     search_result = web_search.search_and_standardize(
                         keyword,
                         scrape_urls=True,
                         scrape_options=scrape_options,
-                        max_results=10,
+                        max_results=5,
                         custom_search_engine_id=custom_search_engine_id
                     )
                     print(f"Web検索処理時間: {time.time() - start_time:.2f}秒")
                     
                     # 検索結果の整理
                     research_content = f"検索キーワード: {keyword}\n\n"
+                    current_chunk = research_content
+                    intermediate_summaries = []
+                    
                     if search_result.get("scraped_data"):
                         for url, data in search_result["scraped_data"].items():
                             if data and "markdown_data" in data:
-                                research_content += f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                new_content = f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                # トークン数を計算
+                                if count_tokens(current_chunk + new_content) > 30000:
+                                    # 現在のチャンクを中間要約
+                                    intermediate_summary = openai.openai_chat(
+                                        openai_model="gpt-4o",
+                                        prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                    )
+                                    intermediate_summaries.append(intermediate_summary)
+                                    # 新しいチャンクを開始
+                                    current_chunk = new_content
+                                else:
+                                    current_chunk += new_content
+                    
+                    # 最後のチャンクを処理
+                    if current_chunk:
+                        intermediate_summary = openai.openai_chat(
+                            openai_model="gpt-4o",
+                            prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                        )
+                        intermediate_summaries.append(intermediate_summary)
+                    
+                    # すべての中間要約を結合
+                    combined_research = "\n\n".join(intermediate_summaries)
                     
                     # 保険商品の分析
                     start_time = time.time()
                     analysis_response = openai.openai_chat(
                         openai_model="gpt-4o",
-                        prompt=get_insurance_product_analysis_prompt() + f"\n\n{research_content}"
+                        prompt=get_insurance_product_analysis_prompt() + f"\n\n{combined_research}"
                     )
                     print(f"商品分析処理時間: {time.time() - start_time:.2f}秒")
                     
@@ -164,16 +193,42 @@ def main():
                                 
                                 # 検索結果の整理
                                 review_content = f"検索キーワード: {review_keyword}\n\n"
+                                current_chunk = review_content
+                                intermediate_summaries = []
+                                
                                 if review_search_result.get("scraped_data"):
                                     for url, data in review_search_result["scraped_data"].items():
                                         if data and "markdown_data" in data:
-                                            review_content += f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                            new_content = f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                            # トークン数を計算
+                                            if count_tokens(current_chunk + new_content) > 30000:
+                                                # 現在のチャンクを中間要約
+                                                intermediate_summary = openai.openai_chat(
+                                                    openai_model="gpt-4o",
+                                                    prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                                )
+                                                intermediate_summaries.append(intermediate_summary)
+                                                # 新しいチャンクを開始
+                                                current_chunk = new_content
+                                            else:
+                                                current_chunk += new_content
+                                
+                                # 最後のチャンクを処理
+                                if current_chunk:
+                                    intermediate_summary = openai.openai_chat(
+                                        openai_model="gpt-4o",
+                                        prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                    )
+                                    intermediate_summaries.append(intermediate_summary)
+                                
+                                # すべての中間要約を結合
+                                combined_reviews = "\n\n".join(intermediate_summaries)
                                 
                                 # 口コミの分析
                                 start_time = time.time()
                                 reviews_response = openai.openai_chat(
                                     openai_model="gpt-4o",
-                                    prompt=get_insurance_product_reviews_prompt() + f"\n\n{review_content}"
+                                    prompt=get_insurance_product_reviews_prompt() + f"\n\n{combined_reviews}"
                                 )
                                 print(f"口コミ分析処理時間: {time.time() - start_time:.2f}秒")
                                 
@@ -206,7 +261,7 @@ def main():
                                         start_time = time.time()
                                         sales_pitch_response = openai.openai_chat(
                                             openai_model="gpt-4o",
-                                            prompt=get_insurance_product_sales_pitch_prompt() + f"\n\n商品情報:\n{research_content}\n\n強み:\n" + "\n".join([f"・{s}" for s in reviews_data.get("strengths", [])])
+                                            prompt=get_insurance_product_sales_pitch_prompt() + f"\n\n商品情報:\n{combined_research}\n\n強み:\n" + "\n".join([f"・{s}" for s in reviews_data.get("strengths", [])])
                                         )
                                         print(f"販売トーク生成処理時間: {time.time() - start_time:.2f}秒")
 
@@ -225,7 +280,7 @@ def main():
                                         start_time = time.time()
                                         switch_pitch_response = openai.openai_chat(
                                             openai_model="gpt-4o",
-                                            prompt=get_insurance_product_switch_pitch_prompt() + f"\n\n商品情報:\n{research_content}\n\n弱み:\n" + "\n".join([f"・{w}" for w in reviews_data.get("weaknesses", [])])
+                                            prompt=get_insurance_product_switch_pitch_prompt() + f"\n\n商品情報:\n{combined_research}\n\n弱み:\n" + "\n".join([f"・{w}" for w in reviews_data.get("weaknesses", [])])
                                         )
                                         print(f"乗り換えトーク生成処理時間: {time.time() - start_time:.2f}秒")
 

@@ -159,8 +159,8 @@ class WebSearch:
             scrape_urls (bool): 検索結果のURLをスクレイピングするかどうか
             scrape_options (dict, optional): スクレイピングのオプション
                 - output_dir (str): 保存先ディレクトリ（デフォルト: "scraped_data"）
-                - save_json (bool): JSONとして保存するかどうか（デフォルト: False）
-                - save_markdown (bool): Markdownとして保存するかどうか（デフォルト: False）
+                - save_json (bool): JSONとして保存するかどうか（デフォルト: True）
+                - save_markdown (bool): Markdownとして保存するかどうか（デフォルト: True）
                 - exclude_links (bool): リンクテキストを除外するかどうか（デフォルト: False）
             **kwargs: 各検索エンジン固有のパラメータ
             
@@ -187,9 +187,10 @@ class WebSearch:
             scraped_data = self.scraper.scrape_multiple_urls(
                 urls=urls,
                 output_dir=scrape_options.get("output_dir", "scraped_data"),
-                save_json=scrape_options.get("save_json", False),
-                save_markdown=scrape_options.get("save_markdown", False),
-                exclude_links=scrape_options.get("exclude_links", False)
+                save_json=scrape_options.get("save_json", True),
+                save_markdown=scrape_options.get("save_markdown", True),
+                exclude_links=scrape_options.get("exclude_links", False),
+                max_depth=scrape_options.get("max_depth", 20)
             )
             
             response["scraped_data"] = scraped_data

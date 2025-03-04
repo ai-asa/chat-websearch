@@ -7,12 +7,11 @@ from src.chat.get_prompt import (
     get_web_research_system_prompt
 )
 from src.websearch.web_search import WebSearch
-from src.webscraping.web_scraping import WebScraper
+from src.tiktoken import count_tokens
 import json
 from dotenv import load_dotenv
 import os
 import time
-from datetime import datetime
 
 # 開発対象
 # 1. 特定の保険商品の情報を調べて特定の形で出力する機能
@@ -111,22 +110,24 @@ def main():
                         scrape_options = {
                             "save_json": False,
                             "save_markdown": False,
-                            "exclude_links": True # リンクを除外
+                            "exclude_links": True, # リンクを除外
+                            "max_depth": 20
                         }
                         # Web検索を実行し、Markdown形式でデータを取得
                         search_result = web_search.search_and_standardize(
                             keyword,
                             scrape_urls=True,
                             scrape_options=scrape_options,
-                            max_results=10,
+                            max_results=5,
                             custom_search_engine_id=custom_search_engine_id
                         )
                         
                         # print(f"\n検索結果: {json.dumps(search_result['search_results'], ensure_ascii=False, indent=2)}")
                         
                         # 検索結果とスクレイピングデータを整理
-                        research_prompt = get_web_research_summarize_prompt()
                         research_content = f"検索キーワード: {keyword}\n\n"
+                        current_chunk = research_content
+                        intermediate_summaries = []
                         
                         # スクレイピング結果の確認
                         has_valid_content = False
@@ -134,20 +135,33 @@ def main():
                             for url, data in search_result["scraped_data"].items():
                                 if data and "markdown_data" in data:
                                     has_valid_content = True
-                                    research_content += f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                    new_content = f"\n---\nURL: {url}\n{data['markdown_data']}\n"
+                                    # トークン数を計算
+                                    if count_tokens(current_chunk + new_content) > 30000:
+                                        # 現在のチャンクを中間要約
+                                        intermediate_summary = openai.openai_chat(
+                                            openai_model="gpt-4o",
+                                            prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                        )
+                                        intermediate_summaries.append(intermediate_summary)
+                                        # 新しいチャンクを開始
+                                        current_chunk = new_content
+                                    else:
+                                        current_chunk += new_content
                         
                         if has_valid_content:
-                            # print(f"\nスクレイピング結果:\n{research_content}")
+                            # 最後のチャンクを処理
+                            if current_chunk:
+                                intermediate_summary = openai.openai_chat(
+                                    openai_model="gpt-4o",
+                                    prompt=get_web_research_summarize_prompt() + f"\n\n{current_chunk}"
+                                )
+                                intermediate_summaries.append(intermediate_summary)
                             
-                            # AIによる検索結果の整理
-                            start_time = time.time()
-                            summary = openai.openai_chat(
-                                openai_model="gpt-4o",
-                                prompt=research_prompt + f"\n\n{research_content}"
-                            )
+                            # すべての中間要約を結合
+                            summary = "\n\n".join(intermediate_summaries)
                             print(f"検索結果整理処理時間: {time.time() - start_time:.2f}秒")
                         else:
-                            # print("\nスクレイピング結果が得られませんでした。")
                             summary = "情報の取得に失敗しました。"
                             
                         # print(f"summary: {summary}")
