@@ -1,3 +1,4 @@
+# %%
 from src.chat.openai_adapter import OpenaiAdapter
 from src.chat.get_prompt import (
     get_system_prompt,
@@ -212,3 +213,4 @@ def main():
 
 if __name__ == "__main__":
     main() 
+# %%
